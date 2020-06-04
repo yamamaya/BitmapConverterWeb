@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<script type="text/javascript" src="jquery-3.5.1.min.js"></script>
+<style type="text/css">
+div.option {
+    display: inline-block;
+    margin-right: 2em;
+}
+</style>
+</head>
+<body>
+
+<fieldset id="STEP1">
+<legend>STEP 1 / Load image</legend>
+<p>
+<input type="file" onchange="onFileSelected(this)">
+</p>
+</fieldset>
+
+<fieldset id="STEP2">
+<legend>STEP 2 / Decrease color depth</legend>
+<p>
+<input type="button" id="BW1" value="Black and White" onClick="onClickBlackAndWhite()">
+<input type="button" id="GRAY8" value="Gray scale" onClick="onClickGrayScale()">
+<input type="button" id="RGB3" value="3-bit RGB(111)" onClick="onClick3BitRGB111()">
+<input type="button" id="RGB8" value="8-bit RGB(332)" onClick="onClick8BitRGB332()">
+<input type="button" id="RGB16" value="16-bit RGB(565)" onClick="onClick16BitRGB565()">
+<input type="button" id="RGB24" value="24-bit RGB(888)" onClick="onClick16BitRGB888()">
+</p>
+<p>
+<div class="option"><input type="checkbox" id="dither" checked>Dither</div>
+<div class="option">Gamma:<input type="number" id="gamma" value="1.6" min="1" max="3" step="0.1" style="width:4em">(only for B/W and 3-bit)</div>
+</p>
+</fieldset>
+
+<fieldset id="STEP3">
+<legend>STEP 3 / Define output format</legend>
+<p>
+<div class="option">
+RGB color order:
+<select id="color_order">
+    <option value="RGB">Red - Green - Blue</option>
+    <option value="RBG">Red - Blue - Green</option>
+    <option value="GRB">Green - Red - Blue</option>
+    <option value="GBR">Green - Blue - Red</option>
+    <option value="BRG">Blue - Red - Green</option>
+    <option value="BGR">Blue - Green - Red</option>
+</select>
+</div>
+</p>
+<p>
+<div class="option">
+Data type:
+<select id="data_type">
+    <option value="uint8_t">uint8_t</option>
+    <option value="uint16_t" selected>uint16_t</option>
+    <option value="uint32_t">uint32_t</option>
+</select>
+</div>
+<div class="option">
+Byte order:
+<select id="byte_order">
+    <option value="BIG" selected>Big endian</option>
+    <option value="LITTLE">Little endian</option>
+</select>
+</div>
+</p>
+<div class="option">
+Output format:
+<select id="output_format">
+    <option value="C" selected>C array declaration</option>
+    <option value="BIN">Binary</option>
+    <option value="HEX">Hex dump</option>
+</select>
+</div>
+</p>
+<p>
+    <input type="button" value="Preview" onclick="onClickPreview()">
+    <input type="button" value="Download" onclick="onClickDownload()">
+</p>
+</fieldset>
+
+<p>
+<div id="image_description"></div>
+<canvas id="canvas1" width=256 height=256 style="border: 1px solid;"></canvas>
+</p>
+<p>
+Preview (only 8 lines from the top)<br>
+<textarea id="text_preview" cols="100" rows="8" wrap="off"></textarea>
+</p>
+
+<script language="javascript">
+
+var dictPixelFormat = {
+    dicName: "pixel format",
+    RGB24: {
+        bits: 24,
+        serializeMode: 1,
+        rgbBits: [ 8, 8, 8 ],
+        defaultDataType: "uint32_t"
+    },
+    RGB16: {
+        bits: 16,
+        serializeMode: 1,
+        rgbBits: [ 5, 6, 5 ],
+        defaultDataType: "uint16_t"
+    },
+    RGB8: {
+        bits: 8,
+        serializeMode: 1,
+        rgbBits: [ 3, 3, 2 ],
+        defaultDataType: "uint8_t"
+    },
+    RGB3: {
+        bits: 4,
+        serializeMode: 4,
+        rgbBits: [ 1, 1, 1 ],
+        defaultDataType: "uint8_t"
+    },
+    GRAY8: {
+        bits: 8,
+        serializeMode: 2,
+        defaultDataType: "uint8_t"
+    },
+    BW1: {
+        bits: 1,
+        serializeMode: 3,
+        defaultDataType: "uint8_t"
+    }
+};
+
+var dictDataType = {
+    dicName: "data type",
+    uint8_t: {
+        bits: 8,
+        dataTypeC: "uint8_t"
+    },
+    uint16_t: {
+        bits: 16,
+        dataTypeC: "uint16_t"
+    },
+    uint32_t: {
+        bits: 32,
+        dataTypeC: "uint32_t"
+    }
+};
+
+var dictColorOrder = {
+    dicName: "color order",
+    RGB: [ 0, 1, 2 ],
+    RBG: [ 0, 2, 1 ],
+    GRB: [ 1, 0, 2 ],
+    GBR: [ 1, 2, 0 ],
+    BRG: [ 2, 0, 1 ],
+    BGR: [ 2, 1, 0 ]
+};
+
+var dictByteOrder = {
+    dicName: "byte order",
+    BIG: {
+        1: [ 0 ],
+        2: [ 0, 1 ],
+        3: [ 0, 1, 2 ],
+        4: [ 0, 1, 2, 3 ]
+    },
+    LITTLE: {
+        1: [ 0 ],
+        2: [ 1, 0 ],
+        3: [ 2, 1, 0 ],
+        4: [ 3, 2, 1, 0 ]
+    }
+};
+
+var dictOutputFormat = {
+    dicName: "output format",
+    C: {
+        mode: "C",
+        preview: 0
+    },
+    BIN: {
+        mode: "BIN",
+        preview: 1
+    },
+    HEX: {
+        mode: "HEX",
+        preview: 0
+    }
+};
+
+var masterImage;
+var convertedImage;
+var ser;
+
+$(function(){
+    $("#STEP1").prop( "disabled", false );
+    $("#STEP2").prop( "disabled", true );
+    $("#STEP3").prop( "disabled", true );
+});
+
+function onFileSelected( input ) {
+    var file = input.files[0];
+    var reader = new FileReader();
+    reader.onload = onFileLoaded;
+    reader.readAsDataURL( file );
+}
+
+function onFileLoaded( e ) {
+    var src_data = e.target.result;
+    var img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = onImageSetted;
+    img.src = src_data;
+}
+
+function onImageSetted( e ) {
+    masterImage = createImageData( e.target );
+    $("#STEP1").prop( "disabled", false );
+    $("#STEP2").prop( "disabled", false );
+    $("#STEP3").prop( "disabled", false );
+    $("#RGB24").click();
+}
+
+function createImageData( img ) {
+    var cv = document.createElement( 'canvas' );
+    cv.width = img.naturalWidth;
+    cv.height = img.naturalHeight;
+    var ct = cv.getContext( '2d' );
+    ct.drawImage( img, 0, 0 );
+    var data = ct.getImageData( 0, 0, cv.width, cv.height );
+    return data;
+}
+
+function updateMainView() {
+    var canvas = $("#canvas1")[0];
+    canvas.width = convertedImage.image.width;
+    canvas.height = convertedImage.image.height;
+    canvas.getContext( '2d' ).putImageData( convertedImage.image, 0, 0 );
+    $("#image_description").text( convertedImage.pixelFormatDescription );
+}
+
+function onClickBlackAndWhite() {
+    conv = new ImageConverter_BW();
+    conv.dithering = $("#dither:checked").val();
+    conv.gamma = $("#gamma").val();
+    convertedImage = conv.decreaseColor( masterImage );
+    updateMainView();
+    setDefaultForPixelFormat( "BW1" );
+}
+
+function onClickGrayScale() {
+    conv = new ImageConverter_GrayScale();
+    convertedImage = conv.decreaseColor( masterImage );
+    updateMainView();
+    setDefaultForPixelFormat( "GRAY8" );
+}
+
+function onClick3BitRGB111() {
+    conv = new ImageConverter_3bit();
+    conv.dithering = $("#dither:checked").val();
+    conv.gamma = $("#gamma").val();
+    convertedImage = conv.decreaseColor( masterImage );
+    updateMainView();
+    setDefaultForPixelFormat( "RGB3" );
+}
+
+function onClick8BitRGB332() {
+    conv = new ImageConverter_RGB332();
+    conv.dithering = $("#dither:checked").val();
+    convertedImage = conv.decreaseColor( masterImage );
+    updateMainView();
+    setDefaultForPixelFormat( "RGB8" );
+}
+
+function onClick16BitRGB565() {
+    conv = new ImageConverter_RGB565();
+    conv.dithering = $("#dither:checked").val();
+    convertedImage = conv.decreaseColor( masterImage );
+    updateMainView();
+    setDefaultForPixelFormat( "RGB16" );
+}
+
+function onClick16BitRGB888() {
+    conv = new ImageConverter_RGB888();
+    convertedImage = conv.decreaseColor( masterImage );
+    updateMainView();
+    setDefaultForPixelFormat( "RGB24" );
+}
+
+function setDefaultForPixelFormat( fmt ) {
+    var pixelFormatConfig = lookupConfigDictionary( fmt, dictPixelFormat );
+    $("#data_type").val( pixelFormatConfig.defaultDataType );
+}
+
+function lookupConfigDictionary( item, dict, desc ) {
+    if ( item in dict ) {
+        return dict[item];
+    } else {
+        if ( desc == undefined ) {
+            desc = dict.dicName;
+        }
+        throw new Error( "Unexpected " + desc );
+    }
+}
+
+function onClickPreview() {
+    generatePreview();
+}
+
+function onClickDownload() {
+    generatePreview();
+    window.location.href = ser.blobURL;
+}
+
+function generatePreview() {
+    ser = new ImageSerializer();
+    ser.colorOrderConfig = lookupConfigDictionary( $("#color_order").val(), dictColorOrder );
+    ser.dataTypeConfig = lookupConfigDictionary( $("#data_type").val(), dictDataType );
+    ser.byteOrderConfig = lookupConfigDictionary( $("#byte_order").val(), dictByteOrder );
+    ser.outputFormatConfig = lookupConfigDictionary( $("#output_format").val(), dictOutputFormat );
+    ser.serializeConvertedImage( convertedImage );
+
+    var reader = new FileReader();
+    reader.onload = function() {
+        var preview = "";
+        if ( ser.outputFormatConfig.preview == 0 ) {
+            var text = reader.result;
+            var p = 0;
+            var count = 0;
+            while ( count < 8 ) {
+                var pp = text.indexOf( "\n", p );
+                if ( pp == -1 ) {
+                    break;
+                }
+                p = pp + 1;
+                count ++;
+                if ( p >= text.length ) {
+                    break;
+                }
+            }
+            preview = text.substring( 0, p ).trimEnd();
+
+        } else if ( ser.outputFormatConfig.preview == 1 ) {
+            var data = new Uint8Array( reader.result );
+            for ( var i = 0 ; i < data.length ; i ++ ) {
+                if ( i % 16 != 0 ) {
+                    preview += " ";
+                }
+                preview += ( "00" + data[i].toString( 16 ).toUpperCase() ).substr( -2 );
+                if ( i % 16 == 15 ) {
+                    preview += "\n";
+                }
+                if ( i == 16 * 8 - 1 ) {
+                    break;
+                }
+            }
+        }
+        $("#text_preview").val( preview );
+    }
+    if ( ser.outputFormatConfig.preview == 0 ) {
+        reader.readAsText( ser.blob );
+    } else if ( ser.outputFormatConfig.preview == 1 ) {
+        reader.readAsArrayBuffer( ser.blob );
+    }
+}
+
+function pickColor( img, x, y ) {
+    var p;
+    if ( y === undefined ) {
+        p = x;
+    } else {
+        p = y * img.width * 4 + x * 4;
+    }
+    return new RGBColor( img.data[p+0], img.data[p+1], img.data[p+2] );
+}
+
+function createTripletFloatArray( len ) {
+    var arr = Array( len );
+    for ( var i = 0 ; i < len ; i ++ ) {
+        arr[i] = new Float32Array( 3 );
+    }
+    return arr;
+}
+
+function createUintArray( bits, len ) {
+    if ( bits == 8 ) {
+        return new Uint8Array( len );
+    } else if ( bits == 16 ) {
+        return new Uint16Array( len );
+    } else if ( bits == 32 ) {
+        return new Uint32Array( len );
+    }
+}
+
+class RGBColor {
+    constructor() {
+        if ( arguments.length == 0 ) {
+            this.R = 0;
+            this.G = 0;
+            this.B = 0;
+        } else if ( arguments.length == 1 && arguments[0] instanceof Uint8ClampedArray ) {
+            this.R = arguments[0][0];
+            this.G = arguments[0][1];
+            this.B = arguments[0][2];
+        } else if ( arguments.length == 1 && arguments[0] instanceof RGBColor ) {
+            this.R = arguments[0].R;
+            this.G = arguments[0].G;
+            this.B = arguments[0].B;
+        } else if ( arguments.length == 3 ) {
+            this.R = arguments[0];
+            this.G = arguments[1];
+            this.B = arguments[2];
+        } else {
+            throw new Error( "Not implemented" );
+        }
+    }
+
+    get luminance() {
+        return 0.299*this.R + 0.587*this.G + 0.114*this.B;
+    }
+
+    isEqual( col ) {
+        return this.R == col.R && this.G == col.G && this.B == col.B;
+    }
+
+    calcDistance( col ) {
+        return Math.sqrt( ( this.R - col.R ) * ( this.R - col.R ) + ( this.G - col.G ) * ( this.G - col.G ) + ( this.B - col.B ) * ( this.B - col.B ) );
+    }
+}
+
+function clip( a ) {
+    if ( a < 0 ) {
+        a = 0;
+    } else if ( a > 255 ) {
+        a = 255;
+    }
+    return a;
+}
+
+class ImageSerializer {
+    constructor() {
+        this.convertedImage = null;
+        this.pixelFormatConfig = null;
+        this.colorOrderConfig = null;
+        this.dataTypeConfig = null;
+        this.byteOrderConfig = null;
+        this.outputFormatConfig = null;
+        this.nativeBits = 0;
+        this.nativeArray = null;
+        this.dataArray = null;
+        this.blob = null;
+    }
+
+    get blobURL() {
+        return URL.createObjectURL( this.blob );
+    }
+
+    serializeConvertedImage( cnv ) {
+        this.pixelFormatConfig = lookupConfigDictionary( cnv.pixelFormat, dictPixelFormat );
+        this.convertedImage = cnv;
+        ser.toNativeData();
+        ser.toDataArray();
+        if ( this.outputFormatConfig.mode == "BIN" ) {
+            ser.toBinaryBlob();
+        } else if ( this.outputFormatConfig.mode == "C" ) {
+            ser.toCCodeBlob();
+        } else if ( this.outputFormatConfig.mode == "HEX" ) {
+            ser.toHexBlob();
+        }
+    }
+
+    toBinaryBlob() {
+        var src = this.dataArray;
+        var N = src.length * ( this.dataTypeConfig.bits / 8 );
+        var bytes = new Uint8Array( N );
+        if ( this.dataTypeConfig.bits == 8 ) {
+            for ( var i = 0 ; i < N ; i ++ ) {
+                bytes[i] = src[i];
+            }
+
+        } else {
+            var srcBits = this.dataTypeConfig.bits;
+            var ratio = srcBits / 8;
+            var temp = new Uint8Array( ratio );
+            var pDest = 0;
+            for ( var pSrc = 0 ; pSrc < src.length ; pSrc ++ ) {
+                for ( var i = 0 ; i < ratio ; i ++ ) {
+                    temp[i] = ( src[pSrc] >>> ( ( ratio - i - 1 ) * 8 ) ) & 0xff;
+                }
+                for ( var i = 0 ; i < ratio ; i ++ ) {
+                    bytes[pDest] = temp[this.byteOrderConfig[ratio][i]];
+                    pDest ++;
+                }
+            }
+        }
+        this.blob = new Blob( [ bytes.buffer ], { type: "application/octet-stream" } );
+    }
+
+    toCCodeBlob() {
+        var typeStr = this.dataTypeConfig.dataTypeC;
+        var len = this.dataArray.length;
+        var indent = "    ";
+        var digits = this.dataTypeConfig.bits / 4;
+        var text = `${typeStr} image[${len}] = {\n`;
+        var line = "";
+        var lineCount = 0;
+        for ( var i = 0 ; i < len ; i ++ ) {
+            if ( i % 16 == 0 ) {
+                if ( line != "" ) {
+                    text += indent + line + "\n";
+                }
+                line = "";
+            } else {
+                line += " ";
+            }
+            line += "0x" + ( ( "00000000" + this.dataArray[i].toString( 16 ).toUpperCase() ).substr( -digits ) );
+            if ( i < len-1 ) {
+                line += ",";
+            }
+        }
+        if ( line != "" ) {
+            text += indent + line + "\n";
+        }
+        text += "};\n";
+        this.blob = new Blob( [ text ], { type: "application/octet-stream" } );
+    }
+
+    toHexBlob() {
+        var src = this.dataArray;
+        var N = src.length * ( this.dataTypeConfig.bits / 8 );
+        var bytes = new Uint8Array( N );
+        if ( this.dataTypeConfig.bits == 8 ) {
+            for ( var i = 0 ; i < N ; i ++ ) {
+                bytes[i] = src[i];
+            }
+
+        } else {
+            var srcBits = this.dataTypeConfig.bits;
+            var ratio = srcBits / 8;
+            var temp = new Uint8Array( ratio );
+            var pDest = 0;
+            for ( var pSrc = 0 ; pSrc < src.length ; pSrc ++ ) {
+                for ( var i = 0 ; i < ratio ; i ++ ) {
+                    temp[i] = ( src[pSrc] >>> ( ( ratio - i - 1 ) * 8 ) ) & 0xff;
+                }
+                for ( var i = 0 ; i < ratio ; i ++ ) {
+                    bytes[pDest] = temp[this.byteOrderConfig[ratio][i]];
+                    pDest ++;
+                }
+            }
+        }
+        var text = "";
+        var line = "";
+        for ( var i = 0 ; i < N ; i ++ ) {
+            if ( i % 16 == 0 ) {
+                if ( line != "" ) {
+                    text += line + "\n";
+                }
+                line = "";
+            } else {
+                line += " ";
+            }
+            line += ( "00" + bytes[i].toString( 16 ).toUpperCase() ).substr( -2 );
+        }
+        if ( line != "" ) {
+            text += line + "\n";
+        }
+        this.blob = new Blob( [ text ], { type: "application/octet-stream" } );
+    }
+
+    toDataArray() {
+        if ( this.nativeBits == this.dataTypeConfig.bits ) {
+            this.dataArray = this.nativeArray;
+
+        } else if ( this.nativeBits < this.dataTypeConfig.bits ) {
+            var src = this.nativeArray;
+            var dest = createUintArray( this.dataTypeConfig.bits, src.length );
+            for ( var i = 0 ; i < src.length ; i ++ ) {
+                dest[i] = src[i];
+            }
+            this.dataArray = dest;
+
+        } else {
+            var ratio;
+            if ( this.pixelFormatConfig.bits == 24 && this.dataTypeConfig.bits == 8 ) {
+                ratio = 3;
+            } else {
+                ratio = this.nativeBits / this.dataTypeConfig.bits;
+            }
+            var src = this.nativeArray;
+            var srcBits = this.pixelFormatConfig.bits;
+            var destBits = this.dataTypeConfig.bits;
+            var dest = createUintArray( destBits, src.length * ratio );
+            var temp = createUintArray( destBits, ratio );
+            var bitmask = ( 1 << destBits ) - 1;
+            var pDest = 0;
+            for ( var pSrc = 0 ; pSrc < src.length ; pSrc ++ ) {
+                for ( var i = 0 ; i < ratio ; i ++ ) {
+                    temp[i] = ( src[pSrc] >>> ( ( ratio - i - 1 ) * destBits ) ) & bitmask;
+                }
+                for ( var i = 0 ; i < ratio ; i ++ ) {
+                    dest[pDest] = temp[this.byteOrderConfig[ratio][i]];
+                    pDest ++;
+                }
+            }
+            this.dataArray = dest;
+        }
+    }
+
+    toNativeData() {
+        var width = this.convertedImage.image.width;
+        var height = this.convertedImage.image.height;
+        var imageData = this.convertedImage.image.data;
+        var output = null;
+        if ( this.pixelFormatConfig.serializeMode != 3 ) {
+            var N = width * height;
+            if ( this.pixelFormatConfig.bits != 24 ) {
+                output = createUintArray( this.pixelFormatConfig.bits, N );
+                this.nativeBits = this.pixelFormatConfig.bits;
+            } else {
+                output = createUintArray( 32, N );
+                this.nativeBits = 32;
+            }
+
+            var ptrSrc = 0;
+            var ptrDest = 0;
+            for ( var y = 0 ; y < height ; y ++ ) {
+                for ( var x = 0 ; x < width ; x ++ ) {
+                    if ( this.pixelFormatConfig.serializeMode == 1 ) { // RGB
+                        var pixel = 0;
+                        for ( var i = 0 ; i < 3 ; i ++ ) {
+                            var rgbElement = this.colorOrderConfig[i];
+                            var bitwidth = this.pixelFormatConfig.rgbBits[rgbElement];
+                            pixel = ( pixel << bitwidth ) | ( imageData[ptrSrc+rgbElement] >> ( 8 - bitwidth ) );
+                        }
+                        ptrSrc += 4;
+                        output[ptrDest] = pixel;
+                        ptrDest ++;
+                    } else if ( this.pixelFormatConfig.serializeMode == 2 ) { // Gray scale
+                        output[ptrDest] = imageData[ptrSrc];
+                        ptrSrc += 4;
+                        ptrDest ++;
+                    }
+                }
+            }
+
+        } else {
+            var N = Math.ceil( width/8 )*8 * height;
+            output = new Uint8Array( N );
+            this.nativeBits = 8;
+            // not implemented yet
+        }
+
+        this.nativeArray = output;
+    }
+}
+
+class ImageConverter {
+    constructor() {
+        this.dithering = true;
+        this.gamma = 1.6;
+    }
+
+    get pixelFormat() {
+        throw new Error( "Not implemented" );
+    }
+
+    get pixelFormatDescription() {
+        throw new Error( "Not implemented" );
+    }
+
+    _prepareNewImage( orgImage ) {
+        var w = orgImage.width;
+        var h = orgImage.height;
+        return new ImageData( w, h );
+    }
+
+    _correctColor( col ) {
+        return col;
+    }
+
+    _gamma( a ) {
+        return Math.pow( a/255, 1/this.gamma )*255;
+    }
+
+    _inverseGamma( a ) {
+        return Math.pow( a/255, this.gamma )*255;
+    }
+
+    getNearestColor() {
+        throw new Error( "Not implemented" );
+    }
+
+    decreaseColor( orgImage ) {
+        var resultImage = this._prepareNewImage( orgImage );
+        var w = orgImage.width;
+        var h = orgImage.height;
+        var errors = Array( 2 );
+        errors[0] = createTripletFloatArray( w );
+        errors[1] = createTripletFloatArray( w );
+        var dataArray = resultImage.data;
+
+        for ( var y = 0 ; y < h ; y ++ ) {
+            for ( var x = 0 ; x < w ; x ++ ) {
+                var ptr = y * w * 4 + x * 4;
+                var orgColor = pickColor( orgImage, ptr );
+                orgColor = this._correctColor( orgColor );
+                if ( this.dithering ) {
+                    orgColor.R += errors[0][x][0];
+                    orgColor.G += errors[0][x][1];
+                    orgColor.B += errors[0][x][2];
+                }
+                var clipped = new RGBColor( clip( orgColor.R ), clip( orgColor.G ), clip( orgColor.B ) );
+                var newColor = this.getNearestColor( clipped );
+                dataArray[ptr+0] = newColor.R;
+                dataArray[ptr+1] = newColor.G;
+                dataArray[ptr+2] = newColor.B;
+                dataArray[ptr+3] = 255;
+
+                if ( this.dithering ) {
+                    var errorR = orgColor.R - newColor.R;
+                    var errorG = orgColor.G - newColor.G;
+                    var errorB = orgColor.B - newColor.B;
+                    if ( x < w - 1 ) {
+                        errors[0][x+1][0] += errorR*7/16;
+                        errors[0][x+1][1] += errorG*7/16;
+                        errors[0][x+1][2] += errorB*7/16;
+                        errors[1][x+1][0] += errorR*1/16;
+                        errors[1][x+1][1] += errorG*1/16;
+                        errors[1][x+1][2] += errorB*1/16;
+                    }
+                    if ( x > 0 ) {
+                        errors[1][x-1][0] += errorR*3/16;
+                        errors[1][x-1][1] += errorG*3/16;
+                        errors[1][x-1][2] += errorB*3/16;
+                    }
+                    errors[1][x][0] += errorR*5/16;
+                    errors[1][x][1] += errorG*5/16;
+                    errors[1][x][2] += errorB*5/16;
+                }
+            }
+            errors[0] = errors[1];
+            errors[1] = createTripletFloatArray( w );
+        }
+
+        return new ConvertedImage( resultImage, this );;
+    }
+}
+
+class ConvertedImage {
+    constructor( img, conv ) {
+        this.image = img;
+        this.pixelFormat = conv.pixelFormat;
+        this.pixelFormatDescription = conv.pixelFormatDescription;
+    }
+}
+
+class ImageConverter_BW extends ImageConverter {
+    constructor() {
+        super();
+        this.thresholdLevel = 128;
+    }
+
+    get pixelFormat() {
+        return "BW1";
+    }
+
+    get pixelFormatDescription() {
+        var items = [];
+        items.push( "Black and White" );
+        if ( this.dithering ) {
+            items.push( "with dithering" );
+        } else {
+            items.push( "without dithering" );
+            items.push( `th=${this.thresholdLevel}` );
+        }
+        items.push( `Gamma=${this.gamma}` );
+        return items.join( " / " );
+    }
+
+    getNearestColor( v ) {
+        var th;
+        if ( this.dithering ) {
+            th = 128;
+        } else {
+            th = this.thresholdLevel;
+        }
+        if ( v < th ) {
+            return 0;
+        } else {
+            return 255;
+        }
+    }
+
+    decreaseColor( orgImage ) {
+        var resultImage = this._prepareNewImage( orgImage );
+        var w = orgImage.width;
+        var h = orgImage.height;
+        var errors = Array( 2 );
+        errors[0] = new Float32Array( w );
+        errors[1] = new Float32Array( w );
+        var dataArray = resultImage.data;
+
+        for ( var y = 0 ; y < h ; y ++ ) {
+            var dir;
+            var startX;
+            if ( y & 1 ) {
+                // right to left
+                dir = -1;
+                startX = w-1;
+            } else {
+                // left to right
+                dir = 1;
+                startX = 0;
+            }
+            for ( var x = startX ; 0 <= x && x < w ; x += dir ) {
+                var ptr = y * w * 4 + x * 4;
+                var orgColor = pickColor( orgImage, ptr ).luminance;
+                orgColor = this._inverseGamma( orgColor );
+                if ( this.dithering ) {
+                    orgColor += errors[0][x];
+                }
+                var clipped = orgColor;
+                var newColor = this.getNearestColor( clipped );
+                dataArray[ptr+0] = newColor;
+                dataArray[ptr+1] = newColor;
+                dataArray[ptr+2] = newColor;
+                dataArray[ptr+3] = 255;
+
+                if ( this.dithering ) {
+                    var error = orgColor - newColor;
+                    if ( dir > 0 ) {
+                        // left to right
+                        if ( x < w - 1 ) {
+                            errors[0][x+1] += error*7/16;
+                            errors[1][x+1] += error*1/16;
+                        }
+                        if ( x > 0 ) {
+                            errors[1][x-1] += error*3/16;
+                        }
+                    } else {
+                        // right to left
+                        if ( x < w - 1 ) {
+                            errors[1][x+1] += error*3/16;
+                        }
+                        if ( x > 0 ) {
+                            errors[0][x-1] += error*7/16;
+                            errors[1][x-1] += error*1/16;
+                        }
+                    }
+                    errors[1][x] += error*5/16;
+                }
+            }
+            errors[0] = errors[1];
+            errors[1] = new Float32Array( w );
+        }
+        return new ConvertedImage( resultImage, this );;
+    }
+}
+
+class ImageConverter_GrayScale extends ImageConverter {
+    constructor() {
+        super();
+        this.dithering = false;
+    }
+
+    get pixelFormat() {
+        return "GRAY8";
+    }
+
+    get pixelFormatDescription() {
+        return "8bit gray scale"
+    }
+
+    getNearestColor( col ) {
+        var y = col.luminance;
+        return new RGBColor( y, y, y );
+    }
+}
+
+class ImageConverter_3bit extends ImageConverter {
+    constructor() {
+        super();
+    }
+
+    get pixelFormat() {
+        return "RGB3";
+    }
+
+    get pixelFormatDescription() {
+        var items = [];
+        items.push( "16bit RGB (R:1, G:1, B:1)" );
+        if ( this.dithering ) {
+            items.push( "with dithering" );
+        } else {
+            items.push( "without dithering" );
+        }
+        items.push( `Gamma=${this.gamma}` );
+        return items.join( " / " );
+    }
+
+    _correctColor( col ) {
+        return new RGBColor( this._inverseGamma( col.R ), this._inverseGamma( col.G ), this._inverseGamma( col.B ) );
+    }
+
+    getNearestColor( col ) {
+        return new RGBColor(
+            col.R < 128 ? 0 : 255,
+            col.G < 128 ? 0 : 255,
+            col.B < 128 ? 0 : 255
+        );
+    }
+}
+
+class ImageConverter_RGB332 extends ImageConverter {
+    constructor() {
+        super();
+    }
+
+    get pixelFormat() {
+        return "RGB8";
+    }
+
+    get pixelFormatDescription() {
+        var items = [];
+        items.push( "8bit RGB (R:3, G:3, B:2)" );
+        if ( this.dithering ) {
+            items.push( "with dithering" );
+        } else {
+            items.push( "without dithering" );
+        }
+        return items.join( " / " );
+    }
+
+    _to3Bit( x ) {
+        return ( x & 0b11100000 ) | ( x >>> 3 );
+    }
+
+    _to2Bit( x ) {
+        return ( x & 0b11000000 ) | ( x >>> 2 );
+    }
+
+    getNearestColor( col ) {
+        return new RGBColor( this._to3Bit( col.R ), this._to3Bit( col.G ), this._to2Bit( col.B ) );
+    }
+}
+
+class ImageConverter_RGB565 extends ImageConverter {
+    constructor() {
+        super();
+    }
+
+    get pixelFormat() {
+        return "RGB16";
+    }
+
+    get pixelFormatDescription() {
+        var items = [];
+        items.push( "16bit RGB (R:5, G:6, B:5)" );
+        if ( this.dithering ) {
+            items.push( "with dithering" );
+        } else {
+            items.push( "without dithering" );
+        }
+        return items.join( " / " );
+    }
+
+    _to5Bit( x ) {
+        return ( x & 0b11111000 ) | ( x >>> 5 );
+    }
+
+    _to6Bit( x ) {
+        return ( x & 0b11111100 ) | ( x >>> 6 );
+    }
+
+    getNearestColor( col ) {
+        return new RGBColor( this._to5Bit( col.R ), this._to6Bit( col.G ), this._to5Bit( col.B ) );
+    }
+}
+
+class ImageConverter_RGB888 extends ImageConverter {
+    constructor() {
+        super();
+    }
+
+    get pixelFormat() {
+        return "RGB24";
+    }
+
+    get pixelFormatDescription() {
+        return "24bit RGB (R:8, G:8, B:8)";
+    }
+
+    decreaseColor( orgImage ) {
+        var resultImage = this._prepareNewImage( orgImage );
+        var w = orgImage.width;
+        var h = orgImage.height;
+        var dataArray = resultImage.data;
+
+        for ( var y = 0 ; y < h ; y ++ ) {
+            for ( var x = 0 ; x < w ; x ++ ) {
+                var ptr = y * w * 4 + x * 4;
+                var col = pickColor( orgImage, ptr );
+                dataArray[ptr+0] = col.R;
+                dataArray[ptr+1] = col.G;
+                dataArray[ptr+2] = col.B;
+                dataArray[ptr+3] = 255;
+            }
+        }
+        return new ConvertedImage( resultImage, this );;
+    }
+}
+
+</script>
+
+</body>
+</html>
