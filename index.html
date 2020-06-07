@@ -459,14 +459,14 @@ class ImageSerializer {
     serializeConvertedImage( cnv ) {
         this.pixelFormatConfig = lookupConfigDictionary( cnv.pixelFormat, dictPixelFormat );
         this.convertedImage = cnv;
-        ser.toNativeData();
-        ser.toDataArray();
+        this.toNativeData();
+        this.toDataArray();
         if ( this.outputFormatConfig.mode == "BIN" ) {
-            ser.toBinaryBlob();
+            this.toBinaryBlob();
         } else if ( this.outputFormatConfig.mode == "C" ) {
-            ser.toCCodeBlob();
+            this.toCCodeBlob();
         } else if ( this.outputFormatConfig.mode == "HEX" ) {
-            ser.toHexBlob();
+            this.toHexBlob();
         }
     }
 
@@ -890,7 +890,7 @@ class ImageConverter_3bit extends ImageConverter {
 
     get pixelFormatDescription() {
         var items = [];
-        items.push( "16bit RGB (R:1, G:1, B:1)" );
+        items.push( "3bit RGB (R:1, G:1, B:1)" );
         if ( this.dithering ) {
             items.push( "with dithering" );
         } else {
